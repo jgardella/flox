@@ -3,6 +3,7 @@ open System.IO
 open Flox
 
 let mutable hadError = false
+let mutable hadRuntimeError = false
 
 let run (source : string) =
     let (tokens, errors) = Scanner.scanTokens source
@@ -10,7 +11,9 @@ let run (source : string) =
     | [||] ->
         match Parser.parse tokens with
         | Some ast ->
-            printfn "%s" (Parser.printAst ast)
+            match Interpreter.interpret ast with
+            | Some _ -> ()
+            | None -> hadRuntimeError <- true
         | None ->
             hadError <- true
     | scannerErrors ->
@@ -40,6 +43,6 @@ let main argv =
         runFile fileName
     | _ ->
         printfn "%s" USAGE
-    if hadError
-    then 65
+    if hadError then 65
+    elif hadRuntimeError then 70
     else 0

@@ -12,3 +12,6 @@ let tokenError (token : Token) (message : string) =
 
 let error (line : int) (message : string) =
     report line "" message
+
+let runtimeError (token : Token) (message : string) =
+    eprintfn "%s\n[line %d]" message token.line

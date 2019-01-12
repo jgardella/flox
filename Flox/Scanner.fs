@@ -137,7 +137,7 @@ let scanTokens (source : string) =
         advance() |> ignore
         
         // Trim the surrounding quotes.
-        source.Substring(start + 1, current - start - 1) 
+        source.Substring(start + 1, current - start - 2) 
         |> addTokenLiteral TokenType.String
         
     let isDigit (c : char) =
