@@ -1,6 +1,7 @@
 ﻿open System
 open System.IO
 open Flox
+open Flox.Parser
 
 let mutable hadError = false
 let mutable hadRuntimeError = false
@@ -10,8 +11,12 @@ let run (source : string) =
     match errors with
     | [||] ->
         match Parser.parse tokens with
-        | Some ast ->
-            match Interpreter.interpret ast with
+        | Some [|Stmt.Expression expr|] ->
+          Interpreter.evaluateExpr expr
+          |> Interpreter.stringify
+          |> printfn "%s"
+        | Some stmts ->
+            match Interpreter.interpret stmts with
             | Some _ -> ()
             | None -> hadRuntimeError <- true
         | None ->
@@ -25,8 +30,7 @@ let run (source : string) =
 let [<Literal>] USAGE = "Usage: flox [script]"
 
 let runFile (path : string) =
-    File.ReadAllText path
-    |> run
+    File.ReadAllText path |> run
 
 let runPrompt () =
     while true do

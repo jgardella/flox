@@ -2,6 +2,8 @@ module Flox.Error
 
 open Flox.Scanner
 
+exception RuntimeError of token : Token * message : string
+
 let report (line : int) (where : string) (message : string) =
     eprintfn "[line %d] Error%s: %s" line where message
         

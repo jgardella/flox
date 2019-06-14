@@ -7,6 +7,14 @@ type Expr =
     | Grouping of expression : Expr
     | Literal of value : obj
     | Unary of operator : Token * right : Expr
+    | Variable of name : Token
+    | Assign of name : Token * value : Expr
+    
+type Stmt =
+    | Expression of expr : Expr
+    | Print of expr : Expr
+    | Var of name : Token * initializer : Expr option
+    | Block of Stmt []
     
 // Creates an unambiguous, if ugly, string representation of AST nodes.
 let rec printAst = function
@@ -18,6 +26,10 @@ let rec printAst = function
         value.ToString()
     | Unary (operator, right) ->
         sprintf "(%s %s)" operator.lexeme (printAst right)
+    | Assign (name, value) ->
+        sprintf "(assign %s %s)" name.lexeme (printAst value)
+    | Variable name ->
+        sprintf "(var %s)" name.lexeme
         
 exception ParseError
       
@@ -88,6 +100,8 @@ let parse (tokens : Token []) =
         elif matchToken [TokenType.Nil] then Expr.Literal null 
         elif matchToken [TokenType.Number; TokenType.String] then
             Expr.Literal (previousToken().literal)
+        elif matchToken [TokenType.Identifier] then
+            Expr.Variable (previousToken())
         elif matchToken [TokenType.LeftParen] then
             let expr = parseExpression()
             consumeToken TokenType.RightParen "Expect ')' after expression." |> ignore
@@ -143,10 +157,78 @@ let parse (tokens : Token []) =
             
         expr
         
+    and parseAssignment () =
+        let mutable expr = parseEquality()
+        
+        if matchToken [TokenType.Equal] then
+            let equals = previousToken()
+            let value = parseAssignment()
+            
+            match expr with
+            | Expr.Variable name ->
+                expr <- Expr.Assign(name, value)
+            | _ ->
+                error equals "Invalid assignment target." |> ignore
+                
+        expr
+        
     and parseExpression () = 
-        parseEquality()
+        parseAssignment()
+        
+    and parsePrintStatement () =
+        let value = parseExpression()
+        consumeToken TokenType.Semicolon "Expect ';' after value." |> ignore
+        Stmt.Print value
+        
+    and parseExpressionStatement () =
+        let expr = parseExpression()
+        consumeToken TokenType.Semicolon "Expect ';' after expression." |> ignore
+        Stmt.Expression expr
+        
+    and parseBlockStatement () =
+        let statements = new ResizeArray<Stmt option>()
+        
+        while not (checkToken TokenType.RightBrace) && not (isAtEnd()) do
+            statements.Add(parseDeclaration())
+        
+        consumeToken TokenType.RightBrace "Expect '}' after block." |> ignore
+        
+        statements.ToArray() 
+        |> Array.choose id
+        |> Stmt.Block
+        
+    and parseStatement () =
+        if matchToken [TokenType.Print] then parsePrintStatement()
+        elif matchToken [TokenType.LeftBrace] then parseBlockStatement()
+        else parseExpressionStatement()
+        
+    and parseVarDeclaration () =
+        let name = consumeToken TokenType.Identifier "Expect variable name."
+        
+        let initializer =
+            if matchToken [TokenType.Equal]
+            then Some (parseExpression())
+            else None
+            
+        consumeToken TokenType.Semicolon "Expect ';' after variable declaration." |> ignore
+        Stmt.Var (name, initializer)
+        
+    and parseDeclaration () =
+        try
+            if matchToken [TokenType.Var]
+            then Some (parseVarDeclaration())
+            else Some (parseStatement())
+        with
+            | ParseError ->
+                synchronize()
+                None
     
     try
-        parseExpression() |> Some
+        let statements = new ResizeArray<Stmt option>()
+        while not <| isAtEnd() do
+            statements.Add(parseDeclaration())
+        statements.ToArray()
+        |> Array.choose id
+        |> Some
     with 
     | ParseError -> None

@@ -1,9 +1,11 @@
 module Flox.Interpreter
 
-open Flox.Scanner
+open Flox.Env
+open Flox.Error
 open Flox.Parser
+open Flox.Scanner
 
-exception RuntimeError of token : Token * message : string
+let mutable currentEnv = Env()
 
 let isTruthy (object : obj) =
     match object with
@@ -13,8 +15,8 @@ let isTruthy (object : obj) =
     
 let isEqual (a : obj) (b : obj) =
     // nil is only equal to nil.
-    if a = null && b = null then true
-    elif a = null then false
+    if isNull a && isNull b then true
+    elif isNull a then false
     else a.Equals b
     
 let stringify (object : obj) =
@@ -40,11 +42,11 @@ let checkNumberOperands (operator : Token) (left : obj) (right : obj) =
     | (:? double, :? double) -> true
     | _ -> raise (RuntimeError (operator, "Operands must be numbers"))   
 
-let rec evaluate = function
+let rec evaluateExpr = function
     | Expr.Literal literal -> literal
-    | Expr.Grouping expr -> evaluate expr
+    | Expr.Grouping expr -> evaluateExpr expr
     | Expr.Unary (operator, right) ->
-        let right = evaluate right
+        let right = evaluateExpr right
         
         match operator.tokenType with
         | TokenType.Minus when checkNumberOperand operator right ->
@@ -60,8 +62,8 @@ let rec evaluate = function
         | _ ->
             null
     | Expr.Binary (left, operator, right) ->
-        let left = evaluate left
-        let right = evaluate right
+        let left = evaluateExpr left
+        let right = evaluateExpr right
         let checkNumberOperands = checkNumberOperands operator
         
         match operator.tokenType with
@@ -97,12 +99,37 @@ let rec evaluate = function
         | TokenType.BangEqual -> (isEqual left right |> not) :> obj
         | TokenType.EqualEqual -> (isEqual left right) :> obj
         | _ -> null
+    | Expr.Variable name -> currentEnv.Get name
+    | Expr.Assign (name, expr) ->
+        let value = evaluateExpr expr
+        currentEnv.Assign name value
+        value
         
-let interpret (expr : Expr) =
+let rec evaluateBlock (stmts : Stmt []) (env : Env) =
+    let previousEnv = currentEnv
     try
-        let value = evaluate expr
-        printfn "%s" (stringify value)
-        Some value
+        currentEnv <- env
+        stmts |> Array.iter evaluateStmt
+    finally
+        currentEnv <- previousEnv
+        
+and evaluateStmt = function
+    | Stmt.Expression expr -> evaluateExpr expr |> ignore
+    | Stmt.Print stmt -> evaluateExpr stmt |> stringify |> printfn "%s"
+    | Stmt.Var (name, initializer) ->
+        let value = 
+            initializer
+            |> Option.map evaluateExpr 
+            |> Option.defaultValue null
+            
+        currentEnv.Define name.lexeme value
+    | Stmt.Block stmts ->
+        evaluateBlock stmts (Env currentEnv)
+
+let interpret (stmts : Stmt []) =
+    try
+        stmts |> Array.iter evaluateStmt
+        Some ()
     with
         | RuntimeError (token, error) ->
             Error.runtimeError token error
