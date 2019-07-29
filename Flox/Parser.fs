@@ -6,15 +6,18 @@ type Expr =
     | Binary of left : Expr * operator : Token * right : Expr
     | Grouping of expression : Expr
     | Literal of value : obj
+    | Logical of exprLeft : Expr * operator : Token * exprRight : Expr
     | Unary of operator : Token * right : Expr
     | Variable of name : Token
     | Assign of name : Token * value : Expr
-    
+
 type Stmt =
     | Expression of expr : Expr
+    | If of condition : Expr * thenBrach : Stmt * elseBranch : Stmt option
     | Print of expr : Expr
     | Var of name : Token * initializer : Expr option
     | Block of Stmt []
+    | While of condition : Expr * body : Stmt
     
 // Creates an unambiguous, if ugly, string representation of AST nodes.
 let rec printAst = function
@@ -30,6 +33,8 @@ let rec printAst = function
         sprintf "(assign %s %s)" name.lexeme (printAst value)
     | Variable name ->
         sprintf "(var %s)" name.lexeme
+    | Logical (exprLeft, operator, exprRight) ->
+        sprintf "(logical %s %s %s)" operator.lexeme (printAst exprLeft) (printAst exprRight)
         
 exception ParseError
       
@@ -156,9 +161,29 @@ let parse (tokens : Token []) =
             expr <- Expr.Binary(expr, operator, right)
             
         expr
+
+    and parseAnd () =
+        let mutable expr = parseEquality()
+
+        while matchToken [TokenType.And] do
+            let operator = previousToken()
+            let right = parseAnd()
+            expr <- Expr.Logical (expr, operator, right)
+
+        expr
+
+    and parseOr () =
+        let mutable expr = parseAnd()
+
+        while matchToken [TokenType.Or] do
+            let operator = previousToken()
+            let right = parseAnd()
+            expr <- Expr.Logical (expr, operator, right)
+
+        expr
         
     and parseAssignment () =
-        let mutable expr = parseEquality()
+        let mutable expr = parseOr()
         
         if matchToken [TokenType.Equal] then
             let equals = previousToken()
@@ -174,6 +199,64 @@ let parse (tokens : Token []) =
         
     and parseExpression () = 
         parseAssignment()
+
+    and parseForStatement () =
+        consumeToken TokenType.LeftParen "Expect '(' after 'for'." |> ignore
+        let initializer =
+            if matchToken [TokenType.Semicolon] then
+                None
+            elif matchToken [TokenType.Var] then
+                Some (parseVarDeclaration())
+            else
+                Some (parseExpressionStatement())
+
+        let condition =
+            if not (checkToken TokenType.Semicolon)
+            then parseExpression()
+            else Expr.Literal true
+        consumeToken TokenType.Semicolon "Expect ';' after loop condition." |> ignore
+
+        let increment =
+            if not (checkToken TokenType.RightParen)
+            then Some (parseExpression())
+            else None
+        consumeToken TokenType.RightParen "Expect ')' after for clauses." |> ignore
+
+        let baseBody = parseStatement()
+
+        let withIncrement =
+            match increment with
+            | Some increment ->
+                Stmt.Block [|
+                    baseBody
+                    Stmt.Expression increment
+                |]
+            | None ->
+                baseBody
+
+        let withCondition = Stmt.While (condition, baseBody)
+
+        match initializer with
+        | Some initializer ->
+            Stmt.Block [|
+                initializer
+                withCondition
+            |]
+        | None -> withCondition
+
+    and parseIfStatement () =
+        consumeToken TokenType.LeftParen "Expect '(' after 'if'." |> ignore
+        let condition = parseExpression()
+        consumeToken TokenType.RightParen "Expect ')' after if condition." |> ignore
+
+        let thenBranch = parseStatement()
+        let elseBranch =
+            if matchToken [TokenType.Else] then
+                Some (parseStatement())
+            else
+                None
+
+        Stmt.If (condition, thenBranch, elseBranch)
         
     and parsePrintStatement () =
         let value = parseExpression()
@@ -196,9 +279,19 @@ let parse (tokens : Token []) =
         statements.ToArray() 
         |> Array.choose id
         |> Stmt.Block
+
+    and parseWhileStatement () =
+        consumeToken TokenType.LeftParen "Expect '(' after 'while'." |> ignore
+        let condition = parseExpression()
+        consumeToken TokenType.RightParen "Expect ')' after condition." |> ignore
+        let body = parseStatement()
+        Stmt.While (condition, body)
         
     and parseStatement () =
-        if matchToken [TokenType.Print] then parsePrintStatement()
+        if matchToken [TokenType.For] then parseForStatement()
+        elif matchToken [TokenType.If] then parseIfStatement()
+        elif matchToken [TokenType.Print] then parsePrintStatement()
+        elif matchToken [TokenType.While] then parseWhileStatement()
         elif matchToken [TokenType.LeftBrace] then parseBlockStatement()
         else parseExpressionStatement()
         

@@ -29,6 +29,18 @@ let run (source : string) =
 
 let [<Literal>] USAGE = "Usage: flox [script]"
 
+let test = """
+var a = 0;
+var b = 1;
+
+while (a < 10000) {
+  print a;
+  var temp = a;
+  a = b;
+  b = temp + b;
+}
+"""
+
 let runFile (path : string) =
     File.ReadAllText path |> run
 
@@ -42,7 +54,8 @@ let runPrompt () =
 let main argv =
     match argv with
     | [||] ->
-        runPrompt()
+//        runPrompt()
+        run test
     | [| fileName |] ->
         runFile fileName
     | _ ->

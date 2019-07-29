@@ -20,7 +20,7 @@ type Env(enclosing : Env) =
         else raise (RuntimeError (name, sprintf "Undefined variable '%s'." name.lexeme))
     member this.Assign (name : Token) (value : obj) =
         if dict.ContainsKey name.lexeme
-        then dict.Add(name.lexeme, value)
+        then dict.[name.lexeme] <- value
         elif not (isNull this.Enclosing)
         then this.Enclosing.Assign name value
         else raise (RuntimeError (name, sprintf "Undefined variable '%s'." name.lexeme))

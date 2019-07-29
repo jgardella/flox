@@ -104,6 +104,17 @@ let rec evaluateExpr = function
         let value = evaluateExpr expr
         currentEnv.Assign name value
         value
+    | Expr.Logical (leftExpr, operator, rightExpr) ->
+        let left = evaluateExpr leftExpr
+        match operator.tokenType with
+        | TokenType.Or when isTruthy left ->
+            left
+        | _ when not (isTruthy left) ->
+            left
+        | _ ->
+            evaluateExpr rightExpr
+
+
         
 let rec evaluateBlock (stmts : Stmt []) (env : Env) =
     let previousEnv = currentEnv
@@ -115,6 +126,13 @@ let rec evaluateBlock (stmts : Stmt []) (env : Env) =
         
 and evaluateStmt = function
     | Stmt.Expression expr -> evaluateExpr expr |> ignore
+    | Stmt.If (condition, ifBranch, thenBranch) ->
+        if isTruthy (evaluateExpr condition)
+        then evaluateStmt ifBranch
+        else 
+            match thenBranch with
+            | Some thenBranch -> evaluateStmt thenBranch
+            | None -> ()
     | Stmt.Print stmt -> evaluateExpr stmt |> stringify |> printfn "%s"
     | Stmt.Var (name, initializer) ->
         let value = 
@@ -125,6 +143,9 @@ and evaluateStmt = function
         currentEnv.Define name.lexeme value
     | Stmt.Block stmts ->
         evaluateBlock stmts (Env currentEnv)
+    | Stmt.While (condition, body) ->
+        while isTruthy (evaluateExpr condition) do
+            evaluateStmt body
 
 let interpret (stmts : Stmt []) =
     try
