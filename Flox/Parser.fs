@@ -2,9 +2,19 @@ module Flox.Parser
 
 open Flox.Scanner
 
+type FunctionKind =
+    | Function
+    | Method
+with
+    override this.ToString() =
+        match this with
+        | Function -> "function"
+        | Method -> "method"
+
 type Expr =
     | Binary of left : Expr * operator : Token * right : Expr
     | Grouping of expression : Expr
+    | Call of callee : Expr * paren : Token * arguments : Expr []
     | Literal of value : obj
     | Logical of exprLeft : Expr * operator : Token * exprRight : Expr
     | Unary of operator : Token * right : Expr
@@ -13,12 +23,14 @@ type Expr =
 
 type Stmt =
     | Expression of expr : Expr
+    | Function of name : Token * functionParams : Token [] * body : Stmt []
     | If of condition : Expr * thenBrach : Stmt * elseBranch : Stmt option
     | Print of expr : Expr
+    | Return of keyword : Token * value : Expr option
     | Var of name : Token * initializer : Expr option
     | Block of Stmt []
     | While of condition : Expr * body : Stmt
-    
+   
 // Creates an unambiguous, if ugly, string representation of AST nodes.
 let rec printAst = function
     | Binary (left, operator, right) -> 
@@ -35,6 +47,8 @@ let rec printAst = function
         sprintf "(var %s)" name.lexeme
     | Logical (exprLeft, operator, exprRight) ->
         sprintf "(logical %s %s %s)" operator.lexeme (printAst exprLeft) (printAst exprRight)
+    | Call (callee, _, _) ->
+        sprintf "(call %s)" (printAst callee) 
         
 exception ParseError
       
@@ -114,13 +128,37 @@ let parse (tokens : Token []) =
         else
             raise (error (peekToken()) "Expect expression.")
         
+    and finishCall (callee : Expr) =
+        let arguments = ResizeArray()
+        if not (checkToken TokenType.RightParen) then
+            let mutable loop = true
+            while loop do
+                if arguments.Count >= 255 then (error (peekToken()) "Cannot have more than 255 arguments.") |> ignore
+                arguments.Add(parseExpression())
+                loop <- matchToken [TokenType.Comma]
+        
+        let paren = consumeToken TokenType.RightParen "Expect ',' after arguments"
+
+        Expr.Call (callee, paren, arguments.ToArray())
+
+    and parseCall () =
+        let mutable expr = parsePrimary()
+
+        let mutable loop = true
+        while loop do
+            if matchToken [TokenType.LeftParen]
+            then expr <- finishCall(expr)
+            else loop <- false
+
+        expr
+
     and parseUnary () =
         if matchToken [TokenType.Bang; TokenType.Minus] then
             let operator = previousToken()
             let right = parseUnary()
             Expr.Unary (operator, right)
         else
-            parsePrimary()
+            parseCall()
     
     and parseMultiplication () =
         let mutable expr = parseUnary()
@@ -234,7 +272,7 @@ let parse (tokens : Token []) =
             | None ->
                 baseBody
 
-        let withCondition = Stmt.While (condition, baseBody)
+        let withCondition = Stmt.While (condition, withIncrement)
 
         match initializer with
         | Some initializer ->
@@ -278,7 +316,17 @@ let parse (tokens : Token []) =
         
         statements.ToArray() 
         |> Array.choose id
-        |> Stmt.Block
+
+    and parseReturnStatement () =
+        let keyword = previousToken()
+        let value =
+            if not (checkToken TokenType.Semicolon) then
+                Some (parseExpression())
+            else
+                None
+
+        consumeToken TokenType.Semicolon "Expect ';' after return value." |> ignore
+        Stmt.Return (keyword, value)
 
     and parseWhileStatement () =
         consumeToken TokenType.LeftParen "Expect '(' after 'while'." |> ignore
@@ -286,15 +334,33 @@ let parse (tokens : Token []) =
         consumeToken TokenType.RightParen "Expect ')' after condition." |> ignore
         let body = parseStatement()
         Stmt.While (condition, body)
-        
+
     and parseStatement () =
         if matchToken [TokenType.For] then parseForStatement()
         elif matchToken [TokenType.If] then parseIfStatement()
         elif matchToken [TokenType.Print] then parsePrintStatement()
+        elif matchToken [TokenType.Return] then parseReturnStatement()
         elif matchToken [TokenType.While] then parseWhileStatement()
-        elif matchToken [TokenType.LeftBrace] then parseBlockStatement()
+        elif matchToken [TokenType.LeftBrace] then Stmt.Block (parseBlockStatement())
         else parseExpressionStatement()
         
+    and parseFunction (functionKind : FunctionKind) =
+        let name = consumeToken TokenType.Identifier (sprintf "Expect %O name." functionKind)
+        consumeToken TokenType.LeftParen (sprintf "Expect '(' after %O name." functionKind) |> ignore
+        let parameters = ResizeArray()
+        if not (checkToken TokenType.RightParen) then
+            let mutable loop = true
+            while loop do
+                if parameters.Count >= 8 then
+                    error (peekToken()) "Cannot have more than 8 parameters." |> ignore
+                parameters.Add (consumeToken TokenType.Identifier "Expect parameter name.")
+                loop <- matchToken [TokenType.Comma]
+        consumeToken TokenType.RightParen "Expect ')' after arguments." |> ignore
+
+        consumeToken TokenType.LeftBrace (sprintf "Expect '{' before %O body." functionKind) |> ignore
+        let body = parseBlockStatement()
+        Stmt.Function (name, parameters.ToArray(), body)
+
     and parseVarDeclaration () =
         let name = consumeToken TokenType.Identifier "Expect variable name."
         
@@ -305,11 +371,11 @@ let parse (tokens : Token []) =
             
         consumeToken TokenType.Semicolon "Expect ';' after variable declaration." |> ignore
         Stmt.Var (name, initializer)
-        
+
     and parseDeclaration () =
         try
-            if matchToken [TokenType.Var]
-            then Some (parseVarDeclaration())
+            if matchToken [TokenType.Fun] then Some (parseFunction FunctionKind.Function)
+            elif matchToken [TokenType.Var] then Some (parseVarDeclaration())
             else Some (parseStatement())
         with
             | ParseError ->

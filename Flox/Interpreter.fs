@@ -5,7 +5,34 @@ open Flox.Error
 open Flox.Parser
 open Flox.Scanner
 
-let mutable currentEnv = Env()
+exception Return of value : obj
+
+type ILoxCallable = 
+    abstract member Call: (Stmt [] -> Env -> unit) * obj [] -> obj
+    abstract member Arity: int
+
+let globals = Env()
+globals.Define "clock" 
+    { new ILoxCallable with
+        member __.Arity = 0
+        member __.Call(_, _) =
+            (System.DateTime.Now.Ticks / System.TimeSpan.TicksPerMillisecond) / 1000L :> obj }
+
+type LoxFunction (name : Token, functionParams : Token [], body : Stmt [], closure : Env) =
+    interface ILoxCallable with
+        member __.Arity = functionParams.Length
+        member __.Call(evaluateBlock, arguments) =
+            let environment = Env(closure)
+            for i = 0 to functionParams.Length - 1 do
+                environment.Define (functionParams.[i].lexeme) (arguments.[i])
+
+            evaluateBlock body environment
+            null
+
+    override __.ToString() =
+        sprintf "<fn %s>" name.lexeme
+
+let mutable currentEnv = globals 
 
 let isTruthy (object : obj) =
     match object with
@@ -68,7 +95,7 @@ let rec evaluateExpr = function
         
         match operator.tokenType with
         | TokenType.Minus when checkNumberOperands left right ->
-            (left :?> double) * (right :?> double)
+            (left :?> double) - (right :?> double)
             :> obj
         | TokenType.Slash when checkNumberOperands left right ->
             (left :?> double) / (right :?> double)
@@ -113,10 +140,20 @@ let rec evaluateExpr = function
             left
         | _ ->
             evaluateExpr rightExpr
-
-
+    | Expr.Call (callee, paren, arguments) ->
+        let callee = evaluateExpr callee
+        let evaluatedArguments = arguments |> Array.map evaluateExpr
+        if not (callee :? ILoxCallable) then runtimeError paren "Can only call functions and classes."
+        let loxFunction = callee :?> ILoxCallable
+        if evaluatedArguments.Length <> loxFunction.Arity then
+            runtimeError paren (sprintf "Expected %d arguments but got %d." (loxFunction.Arity) evaluatedArguments.Length)
+        try
+            loxFunction.Call(evaluateBlock, evaluatedArguments)
+        with
+            | Return returnValue ->
+                returnValue
         
-let rec evaluateBlock (stmts : Stmt []) (env : Env) =
+and evaluateBlock (stmts : Stmt []) (env : Env) =
     let previousEnv = currentEnv
     try
         currentEnv <- env
@@ -146,6 +183,15 @@ and evaluateStmt = function
     | Stmt.While (condition, body) ->
         while isTruthy (evaluateExpr condition) do
             evaluateStmt body
+    | Stmt.Function (name, functionParams, body) ->
+        let loxFunction = LoxFunction (name, functionParams, body, currentEnv)
+        currentEnv.Define name.lexeme loxFunction
+    | Stmt.Return (_, value) ->
+        match value with
+        | Some value ->
+            raise (Return (evaluateExpr value))
+        | None ->
+            raise (Return null)
 
 let interpret (stmts : Stmt []) =
     try
