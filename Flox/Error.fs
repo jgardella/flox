@@ -2,6 +2,7 @@ module Flox.Error
 
 open Flox.Scanner
 
+exception CompileError
 exception RuntimeError of token : Token * message : string
 
 let report (line : int) (where : string) (message : string) =
@@ -17,3 +18,7 @@ let error (line : int) (message : string) =
 
 let runtimeError (token : Token) (message : string) =
     eprintfn "%s\n[line %d]" message token.line
+
+let compileError (token : Token) (message : string) =
+    tokenError token message 
+    CompileError

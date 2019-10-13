@@ -49,9 +49,7 @@ let rec printAst = function
         sprintf "(logical %s %s %s)" operator.lexeme (printAst exprLeft) (printAst exprRight)
     | Call (callee, _, _) ->
         sprintf "(call %s)" (printAst callee) 
-        
-exception ParseError
-      
+             
 let parse (tokens : Token []) =
     let mutable current = 0
     
@@ -83,15 +81,11 @@ let parse (tokens : Token []) =
             i <- i + 1
                 
         matchedToken
-        
-    let error (token : Token) (message : string) =
-        Error.tokenError token message 
-        ParseError
-        
+               
     let consumeToken (tokenType : TokenType) (message : string) =
         if checkToken tokenType
         then advance()
-        else raise (error (peekToken()) message)
+        else raise (Error.compileError (peekToken()) message)
         
     let synchronize () =
         advance() |> ignore
@@ -126,14 +120,14 @@ let parse (tokens : Token []) =
             consumeToken TokenType.RightParen "Expect ')' after expression." |> ignore
             Expr.Grouping expr
         else
-            raise (error (peekToken()) "Expect expression.")
+            raise (Error.compileError (peekToken()) "Expect expression.")
         
     and finishCall (callee : Expr) =
         let arguments = ResizeArray()
         if not (checkToken TokenType.RightParen) then
             let mutable loop = true
             while loop do
-                if arguments.Count >= 255 then (error (peekToken()) "Cannot have more than 255 arguments.") |> ignore
+                if arguments.Count >= 255 then (Error.compileError (peekToken()) "Cannot have more than 255 arguments.") |> ignore
                 arguments.Add(parseExpression())
                 loop <- matchToken [TokenType.Comma]
         
@@ -231,7 +225,7 @@ let parse (tokens : Token []) =
             | Expr.Variable name ->
                 expr <- Expr.Assign(name, value)
             | _ ->
-                error equals "Invalid assignment target." |> ignore
+                Error.compileError equals "Invalid assignment target." |> ignore
                 
         expr
         
@@ -352,7 +346,7 @@ let parse (tokens : Token []) =
             let mutable loop = true
             while loop do
                 if parameters.Count >= 8 then
-                    error (peekToken()) "Cannot have more than 8 parameters." |> ignore
+                    Error.compileError (peekToken()) "Cannot have more than 8 parameters." |> ignore
                 parameters.Add (consumeToken TokenType.Identifier "Expect parameter name.")
                 loop <- matchToken [TokenType.Comma]
         consumeToken TokenType.RightParen "Expect ')' after arguments." |> ignore
@@ -378,7 +372,7 @@ let parse (tokens : Token []) =
             elif matchToken [TokenType.Var] then Some (parseVarDeclaration())
             else Some (parseStatement())
         with
-            | ParseError ->
+            | Error.CompileError ->
                 synchronize()
                 None
     
@@ -390,4 +384,4 @@ let parse (tokens : Token []) =
         |> Array.choose id
         |> Some
     with 
-    | ParseError -> None
+    | Error.CompileError -> None

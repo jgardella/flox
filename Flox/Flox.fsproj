@@ -8,6 +8,7 @@
     <Compile Include="Error.fs" />
     <Compile Include="Env.fs" />
     <Compile Include="Parser.fs" />
+    <Compile Include="Resolver.fs" />
     <Compile Include="Interpreter.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>

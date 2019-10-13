@@ -1,5 +1,6 @@
 module Flox.Interpreter
 
+open System.Collections.Generic
 open Flox.Env
 open Flox.Error
 open Flox.Parser
@@ -10,6 +11,8 @@ exception Return of value : obj
 type ILoxCallable = 
     abstract member Call: (Stmt [] -> Env -> unit) * obj [] -> obj
     abstract member Arity: int
+
+let mutable locals = Dictionary()
 
 let globals = Env()
 globals.Define "clock" 
@@ -69,6 +72,13 @@ let checkNumberOperands (operator : Token) (left : obj) (right : obj) =
     | (:? double, :? double) -> true
     | _ -> raise (RuntimeError (operator, "Operands must be numbers"))   
 
+let lookUpVariable (name : Token) (expr : Expr) =
+    match locals.TryGetValue expr with
+    | (true, distance) ->
+        currentEnv.GetAt distance name
+    | (false, _) ->
+        globals.Get name
+
 let rec evaluateExpr = function
     | Expr.Literal literal -> literal
     | Expr.Grouping expr -> evaluateExpr expr
@@ -126,10 +136,15 @@ let rec evaluateExpr = function
         | TokenType.BangEqual -> (isEqual left right |> not) :> obj
         | TokenType.EqualEqual -> (isEqual left right) :> obj
         | _ -> null
-    | Expr.Variable name -> currentEnv.Get name
-    | Expr.Assign (name, expr) ->
+    | Expr.Variable name as expr -> 
+        lookUpVariable name expr
+    | Expr.Assign (name, expr) as assignExpr ->
         let value = evaluateExpr expr
-        currentEnv.Assign name value
+        match locals.TryGetValue assignExpr with
+        | (true, distance) ->
+            currentEnv.AssignAt distance name value
+        | (false, _) ->
+            globals.Assign name value
         value
     | Expr.Logical (leftExpr, operator, rightExpr) ->
         let left = evaluateExpr leftExpr
@@ -193,8 +208,9 @@ and evaluateStmt = function
         | None ->
             raise (Return null)
 
-let interpret (stmts : Stmt []) =
+let interpret (resolutions : Dictionary<Expr, int>) (stmts : Stmt []) =
     try
+        locals <- resolutions
         stmts |> Array.iter evaluateStmt
         Some ()
     with

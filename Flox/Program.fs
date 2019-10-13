@@ -11,14 +11,20 @@ let run (source : string) =
     match errors with
     | [||] ->
         match Parser.parse tokens with
-        | Some [|Stmt.Expression expr|] ->
-          Interpreter.evaluateExpr expr
-          |> Interpreter.stringify
-          |> printfn "%s"
-        | Some stmts ->
-            match Interpreter.interpret stmts with
-            | Some _ -> ()
-            | None -> hadRuntimeError <- true
+        | Some parseResult ->
+            match Resolver.resolve parseResult with
+            | Some resolutions ->
+                match parseResult with
+                | [|Stmt.Expression expr|] ->
+                  Interpreter.evaluateExpr expr
+                  |> Interpreter.stringify
+                  |> printfn "%s"
+                | stmts ->
+                    match Interpreter.interpret resolutions stmts with
+                    | Some _ -> ()
+                    | None -> hadRuntimeError <- true
+            | None -> 
+                hadError <- true
         | None ->
             hadError <- true
     | scannerErrors ->
@@ -30,14 +36,15 @@ let run (source : string) =
 let [<Literal>] USAGE = "Usage: flox [script]"
 
 let test = """
-var a = 0;
-var b = 1;
+var a = "global";
+{
+  fun showA() {
+    print a;
+  }
 
-while (a < 10000) {
-  print a;
-  var temp = a;
-  a = b;
-  b = temp + b;
+  showA();
+  var a = "block";
+  showA();
 }
 """
 
