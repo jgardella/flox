@@ -20,16 +20,21 @@ type Expr =
     | Unary of operator : Token * right : Expr
     | Variable of name : Token
     | Assign of name : Token * value : Expr
+    | Get of object : Expr * name : Token
+    | Set of object : Expr * name : Token * value : Expr
+    | This of keyword : Token
 
-type Stmt =
+type Func = Func of name : Token * functionParams : Token [] * body : Stmt []
+and Stmt =
     | Expression of expr : Expr
-    | Function of name : Token * functionParams : Token [] * body : Stmt []
+    | Function of func : Func
     | If of condition : Expr * thenBrach : Stmt * elseBranch : Stmt option
     | Print of expr : Expr
     | Return of keyword : Token * value : Expr option
     | Var of name : Token * initializer : Expr option
     | Block of Stmt []
     | While of condition : Expr * body : Stmt
+    | Class of name : Token * methods : Func list
    
 // Creates an unambiguous, if ugly, string representation of AST nodes.
 let rec printAst = function
@@ -49,6 +54,12 @@ let rec printAst = function
         sprintf "(logical %s %s %s)" operator.lexeme (printAst exprLeft) (printAst exprRight)
     | Call (callee, _, _) ->
         sprintf "(call %s)" (printAst callee) 
+    | Get (object, name) ->
+        sprintf "(get %s %s)" (printAst object) name.lexeme
+    | Set (object, name, value) ->
+        sprintf "(set %s %s %s)" (printAst object) name.lexeme (printAst value)
+    | This keyword ->
+        sprintf "(this %s)" keyword.lexeme
              
 let parse (tokens : Token []) =
     let mutable current = 0
@@ -113,6 +124,8 @@ let parse (tokens : Token []) =
         elif matchToken [TokenType.Nil] then Expr.Literal null 
         elif matchToken [TokenType.Number; TokenType.String] then
             Expr.Literal (previousToken().literal)
+        elif matchToken [TokenType.This] then
+            Expr.This (previousToken())
         elif matchToken [TokenType.Identifier] then
             Expr.Variable (previousToken())
         elif matchToken [TokenType.LeftParen] then
@@ -140,9 +153,13 @@ let parse (tokens : Token []) =
 
         let mutable loop = true
         while loop do
-            if matchToken [TokenType.LeftParen]
-            then expr <- finishCall(expr)
-            else loop <- false
+            if matchToken [TokenType.LeftParen] then 
+                expr <- finishCall(expr)
+            elif matchToken [TokenType.Dot] then
+                let name = consumeToken TokenType.Identifier "Expect property name after '.'."
+                expr <- Expr.Get(expr, name)
+            else 
+                loop <- false
 
         expr
 
@@ -224,6 +241,8 @@ let parse (tokens : Token []) =
             match expr with
             | Expr.Variable name ->
                 expr <- Expr.Assign(name, value)
+            | Expr.Get (object, name) ->
+                expr <- Expr.Set (object, name, value)
             | _ ->
                 Error.compileError equals "Invalid assignment target." |> ignore
                 
@@ -353,7 +372,7 @@ let parse (tokens : Token []) =
 
         consumeToken TokenType.LeftBrace (sprintf "Expect '{' before %O body." functionKind) |> ignore
         let body = parseBlockStatement()
-        Stmt.Function (name, parameters.ToArray(), body)
+        Func (name, parameters.ToArray(), body)
 
     and parseVarDeclaration () =
         let name = consumeToken TokenType.Identifier "Expect variable name."
@@ -366,9 +385,22 @@ let parse (tokens : Token []) =
         consumeToken TokenType.Semicolon "Expect ';' after variable declaration." |> ignore
         Stmt.Var (name, initializer)
 
+    and parseClassDeclaration () =
+        let name = consumeToken TokenType.Identifier "Expect class name."
+        consumeToken TokenType.LeftBrace "Expect '{' before class body." |> ignore
+
+        let methods = ResizeArray()
+        while not (checkToken TokenType.RightBrace) && not (isAtEnd()) do
+            methods.Add(parseFunction FunctionKind.Method)
+        
+        consumeToken TokenType.RightBrace "Expect '}' after class body." |> ignore
+
+        Stmt.Class (name, Array.toList (methods.ToArray()))
+
     and parseDeclaration () =
         try
-            if matchToken [TokenType.Fun] then Some (parseFunction FunctionKind.Function)
+            if matchToken [TokenType.Class] then Some (parseClassDeclaration())
+            elif matchToken [TokenType.Fun] then Some (parseFunction FunctionKind.Function |> Stmt.Function)
             elif matchToken [TokenType.Var] then Some (parseVarDeclaration())
             else Some (parseStatement())
         with

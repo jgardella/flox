@@ -5,20 +5,26 @@ open Flox.Error
 open Flox.Parser
 open Flox.Scanner
 
+type ClassType =
+    | NoClass
+    | Class
+
 type FunctionType =
     | NoFunction
     | Function
+    | Method
+    | Initializer
 
 let mutable private scopes = Stack()
 let mutable private resolutions = Dictionary() 
 let mutable private currentFunctionType = FunctionType.NoFunction
+let mutable private currentClassType = ClassType.NoClass
 
 let private beginScope () =
     scopes.Push(Dictionary())
 
 let private endScope () =
     scopes.Pop() |> ignore
-    ()
 
 let private declare (name : Token) =
     if scopes.Count <> 0 then
@@ -37,12 +43,13 @@ let private resolveLocal (expr : Expr) (name : Token) =
     let mutable i = 0
     while i < scopes.Count && not found do
         if arr.[i].ContainsKey name.lexeme then
-            resolutions.[expr] <- scopes.Count - 1 - i
+            resolutions.[expr] <- i
+            found <- true
         i <- i + 1
     
     // Not found, assume it is in global.
 
-let rec private resolveFunction (funParams, body) functionType =
+let rec private resolveFunction functionType (Func (_, funParams, body)) =
     let enclosingFunctionType = currentFunctionType
     currentFunctionType <- functionType
 
@@ -80,6 +87,17 @@ and resolveExpr = function
         resolveExpr right
     | Expr.Unary (_, expr) ->
         resolveExpr expr
+    | Expr.Get (object, _) ->
+        resolveExpr object
+    | Expr.Set (object, _, value) ->
+        resolveExpr value
+        resolveExpr object
+    | Expr.This keyword as expr ->
+        match currentClassType with
+        | ClassType.NoClass ->
+            raise (compileError keyword "Cannot use 'this' outside of a class.")
+        | ClassType.Class ->
+            resolveLocal expr keyword
 and resolveStmt = function
     | Stmt.Block stmts ->
         beginScope()
@@ -91,10 +109,10 @@ and resolveStmt = function
         initializer |> Option.iter resolveExpr
         define name
         ()
-    | Stmt.Function (name, functionParams, body) ->
+    | Stmt.Function (Func (name, functionParams, body) as func) ->
         declare name
         define name
-        resolveFunction (functionParams, body) FunctionType.Function
+        resolveFunction FunctionType.Function func
     | Stmt.Expression expr ->
         resolveExpr expr
     | Stmt.If (condition, thenBranch, elseBranch) ->
@@ -106,17 +124,36 @@ and resolveStmt = function
     | Stmt.Return (keyword, value) ->
         if currentFunctionType = FunctionType.NoFunction then
             raise (Error.compileError keyword "Cannot return from top-level code.")
-        value |> Option.iter resolveExpr
+        elif currentFunctionType = FunctionType.Initializer then
+            raise (Error.compileError keyword "Cannot return a value from an initializer.")
+        else
+            value |> Option.iter resolveExpr
     | Stmt.While (condition, body) ->
         resolveExpr condition
         resolveStmt body
+    | Stmt.Class (name, methods) ->
+        let enclosingClassType = currentClassType
+        currentClassType <- ClassType.Class
+        declare name
+        define name
+        beginScope()
+        scopes.Peek().Add("this", true)
+        methods |> List.iter (fun (Func (name, _, _) as func) ->
+            let declaration = 
+                if name.lexeme = "init" 
+                then FunctionType.Initializer
+                else FunctionType.Method
+            resolveFunction declaration func)
+        endScope()
+        currentClassType <- enclosingClassType
 
 let resolve (stmts : Stmt []) =
     try
         scopes <- Stack()
         resolutions <- Dictionary()
         currentFunctionType <- FunctionType.NoFunction
-        stmts |> Array.iter resolveStmt
+        currentClassType <- ClassType.NoClass
+        resolveStmt (Stmt.Block stmts)
         Some resolutions
     with
     | Error.CompileError -> None

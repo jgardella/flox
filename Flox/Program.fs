@@ -36,16 +36,18 @@ let run (source : string) =
 let [<Literal>] USAGE = "Usage: flox [script]"
 
 let test = """
-var a = "global";
-{
-  fun showA() {
-    print a;
-  }
+class Thing {
+  getCallback() {
+    fun localFunction() {
+      print this;
+    }
 
-  showA();
-  var a = "block";
-  showA();
+    return localFunction;
+  }
 }
+
+var callback = Thing().getCallback();
+callback();
 """
 
 let runFile (path : string) =

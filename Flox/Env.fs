@@ -24,8 +24,8 @@ type Env(enclosing : Env) =
         for i = 1 to distance do
             env <- env.Enclosing
         env
-    member this.GetAt (distance : int) (name : Token) =
-        this.Ancestor(distance).Dict.[name.lexeme]
+    member this.GetAt (distance : int) (name : string) =
+        this.Ancestor(distance).Dict.[name]
     member this.Assign (name : Token) (value : obj) =
         if dict.ContainsKey name.lexeme
         then dict.[name.lexeme] <- value
