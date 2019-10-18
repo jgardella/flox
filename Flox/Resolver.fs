@@ -8,6 +8,7 @@ open Flox.Scanner
 type ClassType =
     | NoClass
     | Class
+    | Subclass
 
 type FunctionType =
     | NoFunction
@@ -96,8 +97,17 @@ and resolveExpr = function
         match currentClassType with
         | ClassType.NoClass ->
             raise (compileError keyword "Cannot use 'this' outside of a class.")
+        | ClassType.Subclass
         | ClassType.Class ->
             resolveLocal expr keyword
+    | Expr.Super (keyword, method) as expr ->
+        match currentClassType with
+        | ClassType.Subclass ->
+            resolveLocal expr keyword
+        | ClassType.Class ->
+            raise (compileError keyword "Cannot use 'super' in a class with no superclass.")
+        | ClassType.NoClass ->
+            raise (compileError keyword "Cannot use 'super' outside of a class.")
 and resolveStmt = function
     | Stmt.Block stmts ->
         beginScope()
@@ -131,11 +141,19 @@ and resolveStmt = function
     | Stmt.While (condition, body) ->
         resolveExpr condition
         resolveStmt body
-    | Stmt.Class (name, methods) ->
+    | Stmt.Class (name, superclass, methods) ->
         let enclosingClassType = currentClassType
         currentClassType <- ClassType.Class
         declare name
         define name
+        superclass 
+        |> Option.iter (fun superclass ->
+            if name.lexeme = superclass.lexeme then
+                raise (compileError superclass "A class cannot inherit from itself.")
+            currentClassType <- ClassType.Subclass
+            resolveExpr (Expr.Variable superclass)
+            beginScope()
+            scopes.Peek().Add("super", true))
         beginScope()
         scopes.Peek().Add("this", true)
         methods |> List.iter (fun (Func (name, _, _) as func) ->
@@ -145,6 +163,7 @@ and resolveStmt = function
                 else FunctionType.Method
             resolveFunction declaration func)
         endScope()
+        superclass |> Option.iter (fun _ -> endScope())
         currentClassType <- enclosingClassType
 
 let resolve (stmts : Stmt []) =

@@ -23,6 +23,7 @@ type Expr =
     | Get of object : Expr * name : Token
     | Set of object : Expr * name : Token * value : Expr
     | This of keyword : Token
+    | Super of keyword : Token * method : Token
 
 type Func = Func of name : Token * functionParams : Token [] * body : Stmt []
 and Stmt =
@@ -34,7 +35,7 @@ and Stmt =
     | Var of name : Token * initializer : Expr option
     | Block of Stmt []
     | While of condition : Expr * body : Stmt
-    | Class of name : Token * methods : Func list
+    | Class of name : Token * superclass : Token option * methods : Func list
    
 // Creates an unambiguous, if ugly, string representation of AST nodes.
 let rec printAst = function
@@ -124,6 +125,11 @@ let parse (tokens : Token []) =
         elif matchToken [TokenType.Nil] then Expr.Literal null 
         elif matchToken [TokenType.Number; TokenType.String] then
             Expr.Literal (previousToken().literal)
+        elif matchToken [TokenType.Super] then
+            let keyword = previousToken()
+            consumeToken TokenType.Dot "Expect '.' after 'super'." |> ignore
+            let method = consumeToken TokenType.Identifier "Expect superclass method name."
+            Expr.Super (keyword, method)
         elif matchToken [TokenType.This] then
             Expr.This (previousToken())
         elif matchToken [TokenType.Identifier] then
@@ -387,6 +393,12 @@ let parse (tokens : Token []) =
 
     and parseClassDeclaration () =
         let name = consumeToken TokenType.Identifier "Expect class name."
+        let superclass = 
+            if matchToken [TokenType.Less] then
+                consumeToken TokenType.Identifier "Expect superclass name." |> ignore
+                Some (previousToken())
+            else
+                None
         consumeToken TokenType.LeftBrace "Expect '{' before class body." |> ignore
 
         let methods = ResizeArray()
@@ -395,7 +407,7 @@ let parse (tokens : Token []) =
         
         consumeToken TokenType.RightBrace "Expect '}' after class body." |> ignore
 
-        Stmt.Class (name, Array.toList (methods.ToArray()))
+        Stmt.Class (name, superclass, Array.toList (methods.ToArray()))
 
     and parseDeclaration () =
         try

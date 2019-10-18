@@ -68,7 +68,7 @@ and LoxInstance (klass : LoxClass) =
     override __.ToString() =
         sprintf "%s instance" klass.Name
 
-and LoxClass (name : string, methods : IDictionary<string, LoxFunction>) =
+and LoxClass (name : string, superclass : LoxClass option, methods : IDictionary<string, LoxFunction>) =
     interface ILoxCallable with
         member this.Arity = 
             match this.FindMethod("init") with
@@ -89,7 +89,8 @@ and LoxClass (name : string, methods : IDictionary<string, LoxFunction>) =
     member __.FindMethod (name : string) =
         match methods.TryGetValue name with
         | (true, value) -> Some value
-        | (false, _) -> None
+        | (false, _) -> 
+            superclass |> Option.bind (fun superclass -> superclass.FindMethod name)
 
     override __.ToString() = name
 
@@ -237,7 +238,17 @@ let rec evaluateExpr = function
             raise (RuntimeError (name, "Only instances have fields."))
     | Expr.This keyword as expr ->
         lookUpVariable keyword expr
-       
+    | Expr.Super (keyword, method) as expr ->
+        let distance = locals.[expr]
+        let superclass = currentEnv.GetAt distance "super" :?> LoxClass
+        let object = currentEnv.GetAt (distance - 1) "this" :?> LoxInstance
+        match superclass.FindMethod method.lexeme with
+        | Some method ->
+            method.Bind(object) :> obj
+        | None ->
+            raise (RuntimeError (method, sprintf "Undefined property '%s'." method.lexeme))
+        
+
 and evaluateBlock (stmts : Stmt []) (env : Env) =
     let previousEnv = currentEnv
     try
@@ -277,15 +288,28 @@ and evaluateStmt = function
             raise (Return (evaluateExpr value))
         | None ->
             raise (Return null)
-    | Stmt.Class (name, methods) ->
+    | Stmt.Class (name, superclassName, methods) ->
+        let superclass =
+            superclassName
+            |> Option.map (fun superclassName ->
+                let superclass = evaluateExpr (Expr.Variable superclassName)
+                if (superclass :? LoxClass) then
+                    superclass :?> LoxClass
+                else
+                    raise (RuntimeError (superclassName, "Superclass must be a class.")))
         currentEnv.Define name.lexeme null
+        superclass
+        |> Option.iter (fun superclass ->
+            currentEnv <- Env(currentEnv)
+            currentEnv.Define "super" superclass)
         let methodMap =
             methods
             |> List.map (fun (Func (name, functionParams, body)) ->
                 (name.lexeme, LoxFunction(name, functionParams, body, currentEnv, (name.lexeme = "init"))))
             |> dict
 
-        let klass = LoxClass(name.lexeme, methodMap)
+        superclass |> Option.iter (fun _ -> currentEnv <- currentEnv.Enclosing)
+        let klass = LoxClass(name.lexeme, superclass, methodMap)
         currentEnv.Assign name klass
 
 let interpret (resolutions : Dictionary<Expr, int>) (stmts : Stmt []) =

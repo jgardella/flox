@@ -9,7 +9,7 @@ type Env(enclosing : Env) =
     let dict = Dictionary<string, obj>()
     new() = Env(null)
     member this.Dict = dict
-    member private __.Enclosing = enclosing
+    member __.Enclosing = enclosing
     member this.Define (name : string) (value : obj) =
         dict.Add(name, value)
     member this.Get (name : Token) =
